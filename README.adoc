@@ -1,0 +1,81 @@
+== Using Avro Records with Kafka
+
+> https://avro.apache.org/docs/current/[Apache Avro] is a language-neutral data serialization format. The project was created by Doug Cutting to provide a way to share 
+data files with a large audience.
+> 
+> Avro data is described in a language-independent schema. The schema is usually described in JSON and the serialization is usually to binary files, although serializin
+g to JSON is also supported. Avro assumes that the schema is present when reading and writing files, usually by embedding the schema in the files themselves.
+> 
+> One of the most interesting features of Avro, and what makes it a good fit for use in a messaging system like Kafka, is that when the application that is writing mess
+ages switches to a new schema, the applications reading the data can continue processing messages without requiring any change or update.
+> 
+> Suppose the original schema was:
+> 
+> ```json
+> { "namespace": "customerManagement.avro",
+>   "type": "record",
+>   "name": "Customer",
+>   "fields": [
+>     { "name": "id", "type": "int" },
+>     { "name": "name", "type": "string" },
+>     { "name": "faxNumber", "type": [ "null", "string" ], "default": "null" } <1>
+>   ]
+> }
+> ```
+> 
+> <1> id and name fields are mandatory, while fax number is optional and defaults to null.
+> 
+> We used this schema for a few months and generated a few terabytes of data in this format. Now suppose that we decide that in the new version, we will upgrade to the 
+twenty-first century and will no longer include a fax number field and will instead use an email field.
+> 
+> The new schema would be:
+> 
+> ```json
+> { "namespace": "customerManagement.avro",
+>   "type": "record",
+>   "name": "Customer",
+>   "fields": [
+>     { "name": "id", "type": "int" },
+>     { "name": "name", "type": "string" },
+>     { "name": "email", "type": [ "null", "string" ], "default": "null" }
+>   ]
+> }
+> ```
+> 
+> Now, after upgrading to the new version, old records will contain “faxNumber” and new records will contain “email.” In many organizations, upgrades are done slowly an
+d over many months. So we need to consider how preupgrade applications that still use the fax numbers and postupgrade applications that use email will be able to handle
+ all the events in Kafka.
+> 
+> The reading application will contain calls to methods similar to `getName()`, `getId()`, and `getFaxNumber()`. If it encounters a message written with the new schema,
+ `getName()` and `getId()` will continue working with no modification, but `getFaxNumber()` will return null because the message will not contain a fax number.
+> 
+> Now suppose we upgrade our reading application and it no longer has the `getFaxNumber()` method but rather `getEmail()`. If it encounters a message written with the o
+ld schema, `getEmail()` will return null because the older messages do not contain an email address.
+> 
+> This example illustrates the benefit of using Avro: even though we changed the schema in the messages without changing all the applications reading the data, there wi
+ll be no exceptions or breaking errors and no need for expensive updates of existing data.
+> 
+> However, there are two caveats to this scenario:
+> 
+> * The schema used for writing the data and the schema expected by the reading
+> application must be compatible. The Avro documentation includes compatibility
+> rules.
+> 
+> * The deserializer will need access to the schema that was used when writing the data, even when it is different than the schema expected by the application that acce
+sses the data. In Avro files, the writing schema is included in the file itself, but there is a better way to handle this for Kafka messages. 
+> 
+> Unlike Avro files, where storing the entire schema in the data file is associated with a fairly reasonable overhead, storing the entire schema in each record will usu
+ally more than double the record size. However, Avro still requires the entire schema to be present when reading the record, so we need to locate the schema elsewhere. 
+To achieve this, we follow a common architecture pattern and use a _Schema Registry_. The Schema Registry is not part of Apache Kafka but there are several open source 
+options to choose from.
+> 
+> The idea is to store all the schemas used to write data to Kafka in the registry. Then we simply store the identifier for the schema in the record we produce to Kafka
+. The consumers can then use the identifier to pull the record out of the schema registry and deserialize the data. The key is that all this work—storing the schema in 
+the registry and pulling it up when required—is done in the serializers and deserializers. The code that produces data to Kafka simply uses the Avro serializer just lik
+e it would any other serializer.
+
+== References:
+
+- "20170707-EB-Confluent_Kafka_Definitive-Guide_Complete", https://www.confluent.io/resources/kafka-the-definitive-guide/
+- https://avro.apache.org/docs/1.11.1/getting-started-java/
+- https://docs.confluent.io/platform/current/schema-registry/fundamentals/serdes-develop/index.html
